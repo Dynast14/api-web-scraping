@@ -4,61 +4,48 @@ import boto3
 import uuid
 
 def lambda_handler(event, context):
-    # URL de la página web que contiene la tabla
-    url = "https://sgonorte.bomberosperu.gob.pe/24horas/?criterio=/"
 
-    # Realizar la solicitud HTTP a la página web
+    # URL donde está la tabla de los sismos
+    url = "https://ultimosismo.igp.gob.pe/ultimo-sismo/sismos-reportados"
+
+    # Obtener la página HTML
     response = requests.get(url)
     if response.status_code != 200:
         return {
-            'statusCode': response.status_code,
-            'body': 'Error al acceder a la página web'
+            "statusCode": response.status_code,
+            "body": "Error al acceder al sitio del IGP"
         }
 
-    # Parsear el contenido HTML de la página web
-    soup = BeautifulSoup(response.content, 'html.parser')
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    # Encontrar la tabla en el HTML
-    table = soup.find('table')
-    if not table:
+    tabla = soup.find("table")
+    if not tabla:
         return {
-            'statusCode': 404,
-            'body': 'No se encontró la tabla en la página web'
+            "statusCode": 404,
+            "body": "No se encontró la tabla de sismos"
         }
 
-    # Extraer los encabezados de la tabla
-    headers = [header.text for header in table.find_all('th')]
+    # Procesar encabezados
+    headers = [h.text.strip() for h in tabla.find_all("th")]
 
-    # Extraer las filas de la tabla
-    rows = []
-    for row in table.find_all('tr')[1:]:  # Omitir el encabezado
-        cells = row.find_all('td')
-        rows.append({headers[i+1]: cell.text for i, cell in enumerate(cells)})
+    # Procesar filas
+    filas_sismos = []
+    for fila in tabla.find_all("tr")[1:11]:  # SOLO 10 sismos
+        columnas = fila.find_all("td")
 
-    # Guardar los datos en DynamoDB
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('TablaWebScrapping')
+        datos = {headers[i]: columnas[i].text.strip() for i in range(len(columnas))}
+        filas_sismos.append(datos)
 
-    # Eliminar todos los elementos de la tabla antes de agregar los nuevos
-    scan = table.scan()
-    with table.batch_writer() as batch:
-        for each in scan['Items']:
-            batch.delete_item(
-                Key={
-                    'id': each['id']
-                }
-            )
+    # DynamoDB
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table("TablaSismosIGP")
 
-    # Insertar los nuevos datos
-    i = 1
-    for row in rows:
-        row['#'] = i
-        row['id'] = str(uuid.uuid4())  # Generar un ID único para cada entrada
-        table.put_item(Item=row)
-        i = i + 1
+    # Guardar en DynamoDB
+    for sismo in filas_sismos:
+        sismo["id"] = str(uuid.uuid4())
+        table.put_item(Item=sismo)
 
-    # Retornar el resultado como JSON
     return {
-        'statusCode': 200,
-        'body': rows
+        "statusCode": 200,
+        "body": filas_sismos
     }
